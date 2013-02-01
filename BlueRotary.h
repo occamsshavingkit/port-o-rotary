@@ -44,12 +44,12 @@
 #define	ON_HOOK		0
 #define	ROTARY_DIALING	1
 #define	ROTARY_FINISHED	0
-#define STEP_SHIFT 128U
-#define SINE_SAMPLES 255U
+#define STEP_SHIFT 7
+#define SINE_SAMPLES 511U
 #define TICKS_PER_CYCLE 256U
 // see http://www.atmel.com/Images/doc1982.pdf
-#define STEP_350 (350 * SINE_SAMPLES * TICKS_PER_CYCLE * STEP_SHIFT / F_CPU)
-#define STEP_440 (440 * SINE_SAMPLES * TICKS_PER_CYCLE * STEP_SHIFT / F_CPU)
+#define STEP_350 (350UL * SINE_SAMPLES * (TICKS_PER_CYCLE << STEP_SHIFT) / F_CPU)
+#define STEP_440 (440UL * SINE_SAMPLES * (TICKS_PER_CYCLE << STEP_SHIFT) / F_CPU)
 
 //=======================================================
 //					Function Definitions
