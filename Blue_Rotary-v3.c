@@ -53,9 +53,9 @@ ISR(TIMER0_COMPA_vect)
 {
     cli();
     cbi(PORTD,DT1);
-    OCR0A = pgm_read_byte(&(sine_table[location_350/STEP_SHIFT]));
+    OCR0A = pgm_read_byte(&(sine_table[(location_350 >> STEP_SHIFT)]));
     location_350 += STEP_350;
-    if(location_350 >= SINE_SAMPLES * STEP_SHIFT) location_350 -= SINE_SAMPLES * STEP_SHIFT;
+    if(location_350 >= (SINE_SAMPLES << STEP_SHIFT)) location_350 -= (SINE_SAMPLES << STEP_SHIFT);
     sei();
 }
 
@@ -63,9 +63,9 @@ ISR(TIMER0_COMPB_vect)
 {
     cli();
     cbi(PORTD,DT2);
-    OCR0B = pgm_read_byte(&(sine_table[location_440/STEP_SHIFT]));
+    OCR0B = pgm_read_byte(&(sine_table[(location_440 >> STEP_SHIFT)]));
     location_440 += STEP_440;
-    if(location_440 >= SINE_SAMPLES * STEP_SHIFT) location_440 -= SINE_SAMPLES * STEP_SHIFT;
+    if(location_440 >= (SINE_SAMPLES << STEP_SHIFT)) location_440 -= (SINE_SAMPLES << STEP_SHIFT);
     sei();
 }
 
