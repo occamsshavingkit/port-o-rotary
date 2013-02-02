@@ -222,7 +222,7 @@ void config_bluetooth(void)
     _delay_ms(100);
 	printf("SET BT AUTH * 1234\nAT\n");		//Set the password
     _delay_ms(100);
-	printf("SET BT CLASS 200408\nAT\n");	//Set device class
+	printf("SET BT CLASS 200404\nAT\n");	//Set device class
     _delay_ms(100);
 	printf("SET BT NAME SPARKY\nAT\n");		//Set the bluetooth name
     _delay_ms(100);
