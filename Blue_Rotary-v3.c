@@ -49,21 +49,21 @@ ISR(TIMER0_OVF_vect)
 	sei();
 }
 
-ISR(TIMER0_COMPA_vect)
+ISR(TIMER2_COMPA_vect)
 {
     cli();
     cbi(PORTD,DT1);
-    OCR0A = pgm_read_byte(&(sine_table[(location_350 >> STEP_SHIFT)]));
+    OCR2A = pgm_read_byte(&(sine_table[(location_350 >> STEP_SHIFT)]));
     location_350 += STEP_350;
     if(location_350 >= (SINE_SAMPLES << STEP_SHIFT)) location_350 -= (SINE_SAMPLES << STEP_SHIFT);
     sei();
 }
 
-ISR(TIMER0_COMPB_vect)
+ISR(TIMER2_COMPB_vect)
 {
     cli();
     cbi(PORTD,DT2);
-    OCR0B = pgm_read_byte(&(sine_table[(location_440 >> STEP_SHIFT)]));
+    OCR2B = pgm_read_byte(&(sine_table[(location_440 >> STEP_SHIFT)]));
     location_440 += STEP_440;
     if(location_440 >= (SINE_SAMPLES << STEP_SHIFT)) location_440 -= (SINE_SAMPLES << STEP_SHIFT);
     sei();
@@ -203,10 +203,9 @@ void ioinit(void)
 	
 	//Init timer for dial tone
     ASSR = 0;
-    TCCR0A=(0<<COM0A1)|(1<<WGM01)|(1<<WGM00);
+    TCCR2A=(1<<WGM21)|(1<<WGM20);
 //    TCCR0B=(1<<CS00); // this turns on the timer now!
-    TIMSK0 = (1<<OCIE0A)|(1<<TOIE0)|(1<<OCIE0B);
-	OCR0A=(0x00);		//Load Compare Register with Delay
+    TIMSK2 = (1<<OCIE2A)|(1<<TOIE2)|(1<<OCIE2B);
 }
 
 //Function: config_bluetooth
@@ -315,13 +314,13 @@ void place_call(void)
     //Play dial tone until the rotary is touched or phone is hung up
 	UCSR0B &= ~(1<<RXCIE0);
 //	TIMSK1 = (1<<OCIE1B);
-    TCCR0B |= (1<<CS00);
+    TCCR2B |= (1<<CS00);
     while(PIND & (1<<EROTARY)){	//If the Rotary starts spinning, get out of the dial tone
 //		dial_tone();
 		if((PINC & (1<<HOOK))!=(1<<HOOK)){	//If the phone is back on the hook, stop the dial tone and exit the function.
 			UCSR0B |= (1<<RXCIE0);					//because there is no number to be dialed.
 //			TIMSK1 &= ~(1<<OCIE0B);
-            TCCR0B &= ~(1<<CS00);
+            TCCR2B &= ~(1<<CS00);
 			LED_OFF();
 			return;
 			}
@@ -345,7 +344,7 @@ void place_call(void)
 			
 	}
     UCSR0B |= (1<<RXCIE0);
-    TCCR0B &= ~(1<<CS00);
+    TCCR2B &= ~(1<<CS00);
     //Begin Read Rotary
     number_length = 0;
     dialed_number = 0;
