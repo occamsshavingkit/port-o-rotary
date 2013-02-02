@@ -206,6 +206,9 @@ void ioinit(void)
     TCCR2A=(1<<WGM21)|(1<<WGM20);
 //    TCCR0B=(1<<CS00); // this turns on the timer now!
     TIMSK2 = (1<<OCIE2A)|(1<<TOIE2)|(1<<OCIE2B);
+    
+    //Shut off stuff we don't need. Power save!
+    PRR = (1<<PRTWI)|(1<<PRTIM1)|(1<<PRSPI)|(1<<PRADC);
 }
 
 //Function: config_bluetooth
