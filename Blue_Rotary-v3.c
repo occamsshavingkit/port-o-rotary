@@ -314,13 +314,13 @@ void place_call(void)
     //Play dial tone until the rotary is touched or phone is hung up
 	UCSR0B &= ~(1<<RXCIE0);
 //	TIMSK1 = (1<<OCIE1B);
-    TCCR2B |= (1<<CS00);
+    TCCR2B |= (1<<CS20);
     while(PIND & (1<<EROTARY)){	//If the Rotary starts spinning, get out of the dial tone
 //		dial_tone();
 		if((PINC & (1<<HOOK))!=(1<<HOOK)){	//If the phone is back on the hook, stop the dial tone and exit the function.
 			UCSR0B |= (1<<RXCIE0);					//because there is no number to be dialed.
 //			TIMSK1 &= ~(1<<OCIE0B);
-            TCCR2B &= ~(1<<CS00);
+            TCCR2B &= ~(1<<CS20);
 			LED_OFF();
 			return;
 			}
@@ -344,7 +344,7 @@ void place_call(void)
 			
 	}
     UCSR0B |= (1<<RXCIE0);
-    TCCR2B &= ~(1<<CS00);
+    TCCR2B &= ~(1<<CS20);
     //Begin Read Rotary
     number_length = 0;
     dialed_number = 0;
