@@ -43,6 +43,9 @@
 # MCU name
 MCU = atmega328p
 
+# UART Buffer Sized
+UART_RX_BUFFER_SIZE = 128
+UART_TX_BUFFER_SIZE = 128
 
 # Processor frequency.
 #     This will define a symbol, F_CPU, in all source code files equal to the 
@@ -126,7 +129,8 @@ CSTANDARD = -std=gnu99
 
 
 # Place -D or -U options here for C sources
-CDEFS = -DF_CPU=$(F_CPU)UL
+CDEFS = -DF_CPU=$(F_CPU)UL -DUART_RX_BUFFER_SIZE=$(UART_RX_BUFFER_SIZE) \
+        -DUART_TX_BUFFER_SIZE=$(UART_TX_BUFFER_SIZE)
 
 
 # Place -D or -U options here for ASM sources

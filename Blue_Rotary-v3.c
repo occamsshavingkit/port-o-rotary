@@ -45,7 +45,7 @@ ISR(TIMER0_OVF_vect)
 {
 	cli();
     sbi(PORTD,DT1);
-    sbi(PORTD,DT2);
+    cbi(PORTD,DT2);
 	sei();
 }
 
@@ -62,7 +62,7 @@ ISR(TIMER2_COMPA_vect)
 ISR(TIMER2_COMPB_vect)
 {
     cli();
-    cbi(PORTD,DT2);
+    sbi(PORTD,DT2);
     OCR2B = pgm_read_byte(&(sine_table[(location_440 >> STEP_SHIFT)]));
     location_440 += STEP_440;
     if(location_440 >= (SINE_SAMPLES << STEP_SHIFT)) location_440 -= (SINE_SAMPLES << STEP_SHIFT);
