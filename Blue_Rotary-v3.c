@@ -41,7 +41,7 @@ ISR (USART_RX_vect)		//USART Receive Interrupt
 }
 
 //ISR (SIG_OUTPUT_COMPARE1B)	//Timer Interrupt used to generate a ringtone
-ISR(TIMER0_OVF_vect)
+ISR(TIMER2_OVF_vect)
 {
 	cli();
     sbi(PORTD,DT1);
