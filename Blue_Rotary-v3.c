@@ -496,7 +496,7 @@ char get_rotary_number(void){
     }
 	
 	//We have a new number!
-    if (dialed_number == 0) dialed_number = '*' - '0';
+    if (dialed_number == 12) dialed_number = '*' - '0';
     if (dialed_number == 11) dialed_number = '#' - '0';
     if (dialed_number == 10) dialed_number = 0; //Correct for operator call
     //Let's make sure we counted correctly...
