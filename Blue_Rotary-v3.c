@@ -286,7 +286,17 @@ void incoming_call(void)
 		_delay_ms(200);
 
         printf("ANSWER\n");				//User the iWRAP command to answer the call
-        while(PINC & (1<<HOOK)); 		//Wait for user to hang up
+        while(PINC & (1<<HOOK)){
+            number_length = 0;
+            counter = 0;
+            if((PIND & (1<<EROTARY)) != (1<<EROTARY)){ // look for dialing, generate the proper tone
+                if(get_rotary_number()){
+                    printf("\nDTMF ");
+                    printf("%c", phone_number[0]);
+                    printf("\n");
+                }
+            }
+        } 		//Wait for user to hang up
         printf("HANGUP\n");
 
 		_delay_ms(1000);
@@ -463,6 +473,7 @@ char get_rotary_number(void){
 	_delay_ms(50); //Wait for switch to debounce
 	
 	//Count the rotary "spins" until it's done rotating
+    dialed_number = 0;
 	while(PINC & (1<<HOOK))
 	{
 		
@@ -485,18 +496,21 @@ char get_rotary_number(void){
     }
 	
 	//We have a new number!
-	number_length++; //Increase number length by 1 digit
+    if (dialed_number == 0) dialed_number = '*' - '0';
+    if (dialed_number == 11) dialed_number = '#' - '0';
     if (dialed_number == 10) dialed_number = 0; //Correct for operator call
     //Let's make sure we counted correctly...
-	if(dialed_number >= 0 && dialed_number <= 9)
+	if(dialed_number == '*' - '0' || dialed_number == '#' - '0' || (dialed_number >= 0 && dialed_number <= 9))
     {
         //Store this number into the array
+        number_length++; //Increase number length by 1 digit
         phone_number[counter] = dialed_number + '0';
     }
     else
     {
         //Some how we got a bad number - ignore it and try again
         counter--;
+        return 0;
     }
 	return 1;
 }
@@ -517,6 +531,16 @@ void dial_number(void){
             printf("%c", phone_number[counter]);
         printf(";\n");		//Should this be \r or \n?
 	
-        while(PINC & (1<<HOOK)); //Wait for user to hang up the phone
+        while(PINC & (1<<HOOK)){ // let's see if we can have tone dials!
+            number_length = 0;
+            counter = 0;
+            if((PIND & (1<<EROTARY)) != (1<<EROTARY)){
+                if(get_rotary_number()){
+                    printf("\nDTMF ");
+                    printf("%c", phone_number[0]);
+                    printf("\n");
+                }
+            }
+        }//Wait for user to hang up the phone
     }
 }
