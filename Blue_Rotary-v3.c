@@ -1,46 +1,84 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <ctype.h>
+#include <string.h>
 #include <util/delay.h>
 #include <avr/io.h>
 #include <avr/interrupt.h>
 #include <avr/pgmspace.h>
+#include <avr/power.h>
+#include <avr/sleep.h>
+#include <avr/wdt.h>
 #include "BlueRotary.h"
+#include "circular_buffer.h"
 
 //================================================================
 //Define Global Variables
 //================================================================
+FILE mystdout = FDEV_SETUP_STREAM(uart_putchar, NULL, _FDEV_SETUP_WRITE);
 volatile char message[MAX_MESSAGE_LENGTH];	//Buffer for UART messages
-volatile char message_complete, ring_tone_flag;	//general purpse flags
+volatile char message_complete = 0;
+volatile char ring_tone_flag;
+volatile char message_unread = 0;	//general purpse flags
 char final_message[MAX_MESSAGE_LENGTH];	//Final buffer for UART messages
-volatile int message_index=0;
+volatile int message_index = 0;
 int dialed_number, counter;
-int get_number_timeout=0;
+int get_number_timeout = 0;
 char number_length, temp;
 char phone_number[20];
-int connected=0;
+volatile char hook_status = HOOK_DOWN;
+volatile int connected=0;
 unsigned location_350=0, location_440=0;
+cbuf _rx_buf;
+cbuf _tx_buf;
+cbuf *rx_buf = &_rx_buf;
+cbuf *tx_buf = &_tx_buf;
+char uart_error;
+char rx_buf_data[UART_RX_BUFFER_SIZE] = {0};
+char tx_buf_data[UART_TX_BUFFER_SIZE] = {0};
 
-//================================================================
-ISR (USART_RX_vect)		//USART Receive Interrupt
+ISR(USART_RX_vect)
 {
-	char character=0;
-	cli();		//Disable Interrupts
-	
-	character=UDR0;	//Copy the character in the UART
-	//Make sure we have received a valid character before copying it to the buffer
-	if(isascii(character) || character==':' || character=='\n')message[message_index]=character;
-	//Check to see if we've received the last character in a message
-	if(message[message_index]=='\n' || message[message_index]=='\r'){
-		message_complete=1;
-	}
-	else{
-		message_index++;
-	}
-	sei();	//Enable Interrupts
+    cli();
+    char c = UDR0;
+    cbuf_put(rx_buf, c);
+    uart_error |= UCSR0A & (UART_PARITY_ERROR|UART_DATA_OVERRUN|UART_FRAME_ERROR);
+    //if(UCSR0A & UART_DATA_OVERRUN) short_ring_it();
+    sei();
 }
 
-//ISR (SIG_OUTPUT_COMPARE1B)	//Timer Interrupt used to generate a ringtone
+ISR(USART_UDRE_vect)
+{
+    cli();
+    char c = 0;
+    if(!cbuf_is_empty(tx_buf)){
+        c = cbuf_get(tx_buf);
+        if(c) {
+            UDR0 = c;
+        }
+    }
+    if(cbuf_is_empty(tx_buf)) {
+        LED_OFF()
+        UCSR0B &= ~(1<<UDRIE0);
+    }
+    sei();
+}
+
+ISR(TIMER1_COMPA_vect)
+{
+    cli();
+    if(hook_status == HOOK_FLASH){
+        hook_status = HOOK_HANGUP;
+        TCCR1B &= ~((1<<CS12)|(1<<CS11)|(1<<CS10));
+    }
+    else if(hook_status == HOOK_DOWN){
+        hook_status = HOOK_FLASH;
+        OCR1A = TIMER1_140MS;
+    }
+    sei();
+    
+}
+
 ISR(TIMER2_OVF_vect)
 {
 	cli();
@@ -69,97 +107,181 @@ ISR(TIMER2_COMPB_vect)
     sei();
 }
 
+ISR(PCINT1_vect) // HOOK!
+{
+    cli();
+    sleep_disable();
+    _delay_ms(40); // debouncing, I hope!
+    if(hook_status == HOOK_FLASH){
+        //output stuff to run call waiting!
+    }
+    if(PINC & (1<<HOOK)){ // if we're off hook
+        hook_status = HOOK_UP;
+        TCCR1B &= ~((1<<CS12)|(1<<CS11)|(1<<CS10));
+    } 
+    else { // if we're on hook
+        hook_status = HOOK_DOWN;
+        OCR1A = TIMER1_60MS;
+        TCCR1B |= (1<<CS12);
+    }
+    sei();
+}
+
+ISR(PCINT2_vect)
+{
+    cli();
+    sleep_disable();
+    sei();
+}
+
+ISR(WDT_vect)
+{
+    cli();
+    sei();
+}
+
+char uart_getc(){
+    if(cbuf_is_empty(rx_buf)) {
+        return 0;
+    }
+    char c = cbuf_get(rx_buf);
+    return c;
+}
+
+char uart_putc(char c){
+    if(!(UCSR0B & (1<<UDRIE0))){
+        UCSR0B |= (1<<UDRIE0);
+    }
+    cbuf_put(tx_buf, c);
+    LED_ON();
+    return tx_buf->error;
+}
+
+char uart_puts(char *c){
+    for(int i = 0; c[i] != '\0' && i < MAX_MESSAGE_LENGTH; i++){
+        if(c[i]== '\n') uart_putc('\r');
+        uart_putc(c[i]);
+    }
+    return 0;
+}
+
+void get_message() {
+    char uart_recv = 0;
+    if(message_unread) return;
+    uart_recv = uart_getc();
+    while(!message_complete && message_index < MAX_MESSAGE_LENGTH - 1){
+        while(!uart_recv) {
+            //sleep_mode();
+            uart_recv = uart_getc();
+        }
+        if((uart_recv == '\n' || uart_recv == '\r')){
+            if(message_index > 0) {
+                message[message_index++] = '\0';
+                message_complete = 1;
+                message_unread = 1;      
+                return;
+            }
+        } 
+        else { 
+            message[message_index++] = uart_recv;
+        }
+        uart_recv = uart_getc();
+    }
+}
+
+void wait_for(const char *s){
+    char match = 0;
+    while(!match){
+        while(!message_complete) get_message();
+        copy_message();
+        match = string_compare(final_message, s);
+    }
+}
+
+void copy_message(void){
+    for(int i = 0; i < message_index; i++){
+        final_message[i] = message[i];
+        message[i] = '\0';
+    }
+    message_complete=0;
+    message_unread=0;
+    message_index=0;
+}
+
+static int uart_putchar(char c, FILE *F){
+    if (c == '\n'){
+        uart_putc('\r');
+    }
+    uart_putc(c);
+    return 0;
+}
 
 int main (void)
 {	
-	//Initialize AVR I/O, UART and Interrupts
+    stdout = &mystdout;
     ioinit();
+
+    cbuf_init(rx_buf, UART_RX_BUFFER_SIZE, rx_buf_data);
+    cbuf_init(tx_buf, UART_TX_BUFFER_SIZE, tx_buf_data);
+	//Initialize AVR I/O, UART and Interrupts
 
 	//Turn on the bluetooth module
 	cbi(PORTD, BT_RES);	//Bring module out of reset 
 	sbi(PORTC, BT_EN);	//Enable module
-	LED_ON();
-	_delay_ms(500);		//Allow module to stabilize
-	LED_OFF();
 	cbi(PORTC, RING_PWR);//Let the ringer "Warm Up"
-	_delay_ms(2000);
-	config_bluetooth();	//Put Blue Giga WT32 module into HFP mode
-	short_ring_it();	//Give notification to user that bootup process is complete
+    
+    wait_for("READY"); // wait for the bluetooth module to say it is ready
+
+    config_bluetooth();	//Put Blue Giga WT32 module into HFP mode
 	while(1){
-	
-	
+        sbi(PORTC, RING_PWR);
 		while(!connected)	//Until we're connected to a phone, listen for incoming connections
 		{				
 			LED_ON();
 
-			//Clear the message buffers
-			for(int i=0; i<MAX_MESSAGE_LENGTH;i++)message[i]='\0';
-			for(int i=0; i<MAX_MESSAGE_LENGTH;i++)final_message[i]='\0';
-			message_index=0;
-			message_complete=0;		
-			
 			sei();		//Start looking for messages from Bluetooth
-			//Wait for A message
-			while(!message_complete){	//NOTE: Message is received in the UART interrupt
-				_delay_ms(400);
-				LED_OFF();
-				_delay_ms(100);
-				LED_ON();
-			}
-			cli();		//Stop looking for messages while we process this one!
-			
-			message_complete=0;
-			message_index=0;
-			//Copy the received message into a final message string
-			for(int i=0; i<MAX_MESSAGE_LENGTH;i++)final_message[i] = message[i];			
-			for(int i=0; i<MAX_MESSAGE_LENGTH;i++)message[i]='\0';
-			
-			//If we get a RING 0 event then we are "connected"
-			if(string_compare(final_message, "RING")){			
-				connected=1;	//Set the connected flag to notify program of status
-				short_ring_it();	//Give user notification of established connection
-				_delay_ms(250);
-				short_ring_it();
-			}
 
+            wait_for("CONNECT 0 HFP");
+            connected=1;	//Set the connected flag to notify program of status
+            cbi(PORTC, RING_PWR);
+            short_ring_it();	//Give user notification of established connection
+            _delay_ms(100);
+            short_ring_it();
 		}
 		
 		while(connected){	//If we're connected, stay in this 'routine' until we're disconnected
-			LED_ON();
-			sei();
-			while((PINC & (1<<HOOK))!=(1<<HOOK)) //Wait for user to lift phone off hook
-			{
-				//If we receive a message while the phone is on the hook then evaluate it!
-				if(message_complete){
-					cli();
-					message_complete=0;
-					message_index=0;
-					for(int i=0; i<MAX_MESSAGE_LENGTH;i++)final_message[i] = message[i];
-					LED_OFF();
-					sei();
-					//Check to see if we're receiving an incoming call
-					if(string_compare(final_message, "HFP 0 RING")){
-						incoming_call();	//If we're getting a RING, then answer the phone
-						for(int i=0; i<MAX_MESSAGE_LENGTH;i++)final_message[i]='\0';
-						for(int i=0; i<MAX_MESSAGE_LENGTH;i++)message[i]='\0';
-					}
-					//Check to see if the BT connection has been lost
-					if(string_compare(final_message, "NO CARRIER 0")){
-						for(int i=0; i<MAX_MESSAGE_LENGTH;i++)message[i]='\0';
-						for(int i=0; i<MAX_MESSAGE_LENGTH;i++)final_message[i]='\0';
-						connected=0;	//We're no longer connected to a BT module!
-						message_complete=0;
-						_delay_ms(200);
-						break;	//If we lose the bluetooth connection, start searching again
-					}
-				}
-				
-			}
-			
+			LED_OFF();
+            // sleep until something happens
+            sei();
+            sbi(PORTC, RING_PWR);
+            sleep_mode();
+            LED_ON();
+
+            get_message();
+
 			//If the phone is taken off the hook, place a call
-			if(PINC & (1<<HOOK)){
+			if(hook_status == HOOK_UP){
 				place_call(); //We need to dial out
-			}			
+			}
+            
+            if(message_complete){
+                copy_message();
+                LED_OFF();
+                //Check to see if we're receiving an incoming call
+                if(string_compare(final_message, "HFP 0 RING")){
+                    incoming_call();	//If we're getting a RING, then answer the phone
+                    for(int i=0; i<MAX_MESSAGE_LENGTH;i++)final_message[i]='\0';
+                    for(int i=0; i<MAX_MESSAGE_LENGTH;i++)message[i]='\0';
+                }
+                //Check to see if the BT connection has been lost
+                if(string_compare(final_message, "NO CARRIER 0")){
+                    for(int i=0; i<MAX_MESSAGE_LENGTH;i++)message[i]='\0';
+                    for(int i=0; i<MAX_MESSAGE_LENGTH;i++)final_message[i]='\0';
+                    connected=0;	//We're no longer connected to a BT module!
+                    message_complete=0;
+                    _delay_ms(200);
+                }
+            }				
 		}
 	}	
 		
@@ -175,6 +297,25 @@ int main (void)
 //Outputs:	None
 void ioinit(void)
 {
+
+    // clear the watchdog so we don't get stuck ever
+    cli();
+    MCUSR &= ~(1<<WDRF);
+    WDTCSR |= (1<<WDCE)|(1<<WDE);
+    WDTCSR = 0x00;
+    //WDTCSR |= (1<<WDCE)|(1<<WDE);
+    //WDTCSR = (1<<WDIE);
+    sei();
+    
+    // handle power saving
+    power_all_disable();
+    power_timer0_enable();
+    power_timer1_enable();
+    power_timer2_enable();
+    power_usart0_enable();
+    
+    set_sleep_mode(SLEEP_MODE_IDLE);
+        
     //1 = output, 0 = input
 	DDRB = (1<<CS) | (1<<SCK) | (1<<MOSI);										//Define Port B GPIO Outputs
     PORTB = (1<<MISO);
@@ -190,25 +331,33 @@ void ioinit(void)
 
     //SPI Bus setup
 	//SPCR = (1<<SPE)|(1<<MSTR)|(1<<CPHA)|(1<<CPOL)|(1<<SPR0);	//Might need to change the phase
-	
-	// USART Baud rate: 57600 (With 8 MHz Clock)
+
     UBRR0H = (MYUBRR >> 8) & 0x7F;	//Make sure highest bit(URSEL) is 0 indicating we are writing to UBRRH
 	UBRR0L = MYUBRR;
-    UCSR0A = (1<<U2X0);	
-	UCSR0B = (1<<RXCIE0)|(1<<RXEN0)|(1<<TXEN0);	//Enable Interrupts on receive character
-//    UCSR0C = (1<<URSE0L)|(1<<UCSZ0)|(1<<UCSZ1);	
-    stdout = &mystdout; //Required for printf init
-	cli();
-    
-	
+    if(DOUBLE_BAUD_RATE) UCSR0A |= (1<<U2X0);	
+	UCSR0B = (1<<RXCIE0)|(1<<UDRIE0)|(1<<RXEN0)|(1<<TXEN0);	//Enable Interrupts on receive character    
+    //UCSR0C = (1<<UCSZ00)|(1<<UCSZ01);	
+    stdout = &mystdout;
+
 	//Init timer for dial tone
     ASSR = 0;
     TCCR2A=(1<<WGM21)|(1<<WGM20);
-//    TCCR0B=(1<<CS00); // this turns on the timer now!
     TIMSK2 = (1<<OCIE2A)|(1<<TOIE2)|(1<<OCIE2B);
-    
-    //Shut off stuff we don't need. Power save!
-    //PRR = (1<<PRTWI)|(1<<PRTIM1)|(1<<PRSPI)|(1<<PRADC);
+
+    // Init timer for hook flash
+    TCCR1A= 0x00;
+    TCCR1B=(1<<WGM12);
+    TCCR1B &= ~((1<<CS12)|(1<<CS11)|(1<<CS10));
+    TIMSK1 |= (1<<TOIE1)|(1<<OCIE1A);
+    // pin change interrupts
+    // turned on so we wake up on anything happening... I hope.
+    PCICR = (1<<PCIE1);
+    // PCINT19 = EROTARY // PCINT20 = ROTARY // PCINT21 = BT_UNPAIR
+    // PCMSK2 = (1<<PCINT19)|(1<<PCINT20)|(1<<PCINT21);
+    // PCINT8 = HOOK
+    PCMSK1 = (1<<PCINT8);
+
+
 }
 
 //Function: config_bluetooth
@@ -218,51 +367,21 @@ void ioinit(void)
 //NOTE: UART must be configured to send data at 57600bps
 void config_bluetooth(void)
 {   
-	printf("SET CONTROL CONFIG 100\nAT\n");	//Enable SCO Links
-    _delay_ms(100);
-	printf("SET PROFILE HFP ON\nAT\n");		//Put iWRAP into HFP mode
-    _delay_ms(100);
+    printf("SET CONTROL CONFIG 100\nAT\n");	//Enable SCO Links
+	wait_for("OK");
+    printf("SET PROFILE HFP ON\nAT\n");		//Put iWRAP into HFP mode
+	wait_for("OK");
+    printf("SET CONTROL AUTOCALL 111F 15000 HFP\nAT\n");
+	wait_for("OK");
 	printf("SET BT AUTH * 1234\nAT\n");		//Set the password
-    _delay_ms(100);
+	wait_for("OK");
 	printf("SET BT CLASS 200404\nAT\n");	//Set device class
-    _delay_ms(100);
+	wait_for("OK");
 	printf("SET BT NAME SPARKY\nAT\n");		//Set the bluetooth name
-    _delay_ms(100);
+	wait_for("OK");
 	printf("RESET\n");
 	//WT32 should now be configured and ready to accept connection from other Bluetooth devices
 	//Just need to wait for a RING event to connect and establish and SCO connection.
-}
-
-static int uart_putchar(char c, FILE *stream)
-{
-  if (c == '\n')
-    uart_putchar('\r', stream);
-  
-  loop_until_bit_is_set(UCSR0A, UDRE0);
-  UDR0 = c;
-  return 0;
-}
-
-uint8_t uart_getchar(void)
-{
-    while( !(UCSR0A & (1<<RXC0)) );
-	return(UDR0);
-}
-
-//Function:	delay_ms
-//Purpose:	General delay. Lasts ~1ms
-//Inputs:	int x - Time to delay
-//Outputs:	None
-void delay_ms(uint16_t x)
-{
-  uint8_t y, z;
-  for ( ; x > 0 ; x--){
-    for ( y = 0 ; y < 40 ; y++){
-      for ( z = 0 ; z < 40 ; z++){
-        asm volatile ("nop");
-      }
-    }
-  }
 }
 
 //Function:	incoming_call
@@ -283,37 +402,24 @@ void incoming_call(void)
 
     if(PINC & (1<<HOOK))	//The phone has been taken off the hooK
     {
-		_delay_ms(200);
-
+        sbi(PORTC, RING_PWR);
         printf("ANSWER\n");				//User the iWRAP command to answer the call
-        while(PINC & (1<<HOOK)){
+        wait_for("STATUS \"call\" 1");
+        while(hook_status != HOOK_HANGUP){
             number_length = 0;
             counter = 0;
             if((PIND & (1<<EROTARY)) != (1<<EROTARY)){ // look for dialing, generate the proper tone
                 if(get_rotary_number()){
                     printf("\nDTMF ");
-                    printf("%c", phone_number[0]);
+                    uart_putc(phone_number[0]);
                     printf("\n");
                 }
             }
         } 		//Wait for user to hang up
         printf("HANGUP\n");
-
-		_delay_ms(1000);
+        wait_for("STATUS \"call\" 0");
     }
     
-}
-
-//Function:	dial_tone
-//Purpose:	Generate a dial tone on the handset
-//Inputs:	None
-//Outputs:	None
-void dial_tone(void)
-{   // should be about 350 Hz
-	sbi(PORTD, DT1);
-    _delay_ms(50.0/35.0);    
-    cbi(PORTD, DT1);
-    _delay_ms(50.0/35.0);
 }
 
 //Function:	place_call
@@ -326,38 +432,30 @@ void place_call(void)
     
     //Play dial tone until the rotary is touched or phone is hung up
 	UCSR0B &= ~(1<<RXCIE0);
-//	TIMSK1 = (1<<OCIE1B);
-    TCCR2B |= (1<<CS20);
+    DIALTONE_ON();
     while(PIND & (1<<EROTARY)){	//If the Rotary starts spinning, get out of the dial tone
-//		dial_tone();
+        get_message();
 		if((PINC & (1<<HOOK))!=(1<<HOOK)){	//If the phone is back on the hook, stop the dial tone and exit the function.
 			UCSR0B |= (1<<RXCIE0);					//because there is no number to be dialed.
-//			TIMSK1 &= ~(1<<OCIE0B);
-            TCCR2B &= ~(1<<CS20);
+            DIALTONE_OFF();
 			LED_OFF();
 			return;
-			}
+        }
 			
 			//If we get a message before we start dialing, check to make sure it isn't the "disconnect" message.
-			if(message_complete){
-				cli();
-				message_complete=0;
-				message_index=0;
-				for(int i=0; i<MAX_MESSAGE_LENGTH;i++)final_message[i] = message[i];
-				for(int i=0; i<MAX_MESSAGE_LENGTH;i++)message[i]='\0';
-				sei();
-				if(string_compare(final_message, "NO CARRIER 0")){
-					for(int i=0; i<MAX_MESSAGE_LENGTH;i++)message[i]='\0';
-					for(int i=0; i<MAX_MESSAGE_LENGTH;i++)final_message[i]='\0';
-					connected=0;
-					message_complete=0;
-					return;		//If we lose the bluetooth connection, exit the function and start looking for a new BT connection
-				}
-			}
-			
+        if(message_complete){
+            copy_message();
+            if(string_compare(final_message, "NO CARRIER 0")){
+                for(int i=0; i<MAX_MESSAGE_LENGTH;i++)message[i]='\0';
+                for(int i=0; i<MAX_MESSAGE_LENGTH;i++)final_message[i]='\0';
+                connected=0;
+                message_complete=0;
+                return;		//If we lose the bluetooth connection, exit the function and start looking for a new BT connection
+            }
+        }
 	}
     UCSR0B |= (1<<RXCIE0);
-    TCCR2B &= ~(1<<CS20);
+    DIALTONE_OFF();
     //Begin Read Rotary
     number_length = 0;
     dialed_number = 0;
@@ -377,11 +475,10 @@ void place_call(void)
 			get_number_timeout++;
 		}
 		//If we've reached the timeout, and we have a number to dial, then dial it!
-		if(counter > 0)dial_number();
+		if(counter > 0) dial_number();
 	}
 	printf("HANGUP\n");	//After dialing number, wait for the phone to go on the hook and then hang up.
     get_number_timeout=0;
-	_delay_ms(1000);		//Let the bluetooth messages stop.
 	LED_OFF();
 }
 
@@ -403,7 +500,7 @@ void ring_it(void)
 		cbi(PORTC, RING1);
         sbi(PORTC, RING2);
         _delay_ms(25.0);
-		if(PINC & (1<<HOOK)) break;
+		if(hook_status == HOOK_UP) break;
     } 
 
     cbi(PORTC, RING1);
@@ -419,8 +516,6 @@ void ring_it(void)
 //Outputs:	None
 void short_ring_it(void)
 {    
-    LED_ON();
-
     for(char i = 0 ; i < 1 ; i++)
     {
         sbi(PORTC, RING1);
@@ -434,8 +529,6 @@ void short_ring_it(void)
 
     cbi(PORTC, RING1);
     cbi(PORTC, RING2);
-
-    LED_OFF();
 }
 
 //Use to find a string within a search string
@@ -443,23 +536,20 @@ void short_ring_it(void)
 //find : "the\0" - return OK
 char string_compare(const char *search_string, const char *find_string)
 {
-
-    int find_spot, search_spot;
-    char spot_character, search_character;
-    find_spot = 0;
-
-    for(search_spot = 0 ; ; search_spot++)
+    char find_spot = 0;
+    for(char search_spot = 0 ; search_spot < MAX_MESSAGE_LENGTH; search_spot++)
     {
-        if(find_string[find_spot] == '\0') return OK; //We've reached the end of the search string - that's good!
-        if(search_string[search_spot] == '\0') return ERROR; //End of string found
+        if(find_string[find_spot] == '\0'){
+            return OK; //We've reached the end of the search string - that's good!
+        }
+        if(search_string[search_spot] == '\0'){ 
+            return ERROR; //End of string found
+        }
 
-        spot_character = find_string[find_spot]; //Compiler limit
-        search_character = search_string[search_spot]; //Compiler limit
-
-        if(spot_character == search_character) //We found another character
+        if(find_string[find_spot] == search_string[search_spot]){ //We found another character
             find_spot++; //Look for the next spot in the search string
-        else if(find_spot > 0) //No character found, so reset the find_spot
-            find_spot = 0;
+        }
+        else find_spot = 0;
     }
 
     return 0;
@@ -520,7 +610,7 @@ char get_rotary_number(void){
 //Inputs:	None
 //Outputs:	None
 void dial_number(void){
-    if(PINC & (1<<HOOK)) //Make sure we still have the phone off hook
+    if(hook_status != HOOK_HANGUP) //Make sure we still have the phone off hook
     {
         //Once we are here, we have the number, time to send it to the cell phone
         //May need to establish an SCO connection
@@ -528,16 +618,16 @@ void dial_number(void){
         printf("\nATD");	//Do I need the \r leading?
 	// \r is automatically put in!
         for(counter = 0; counter < number_length ; counter++)
-            printf("%c", phone_number[counter]);
+            uart_putc(phone_number[counter]);
         printf(";\n");		//Should this be \r or \n?
 	
-        while(PINC & (1<<HOOK)){ // let's see if we can have tone dials!
+        while(hook_status != HOOK_HANGUP){ // let's see if we can have tone dials!
             number_length = 0;
             counter = 0;
             if((PIND & (1<<EROTARY)) != (1<<EROTARY)){
                 if(get_rotary_number()){
                     printf("\nDTMF ");
-                    printf("%c", phone_number[0]);
+                    uart_putc(phone_number[0]);
                     printf("\n");
                 }
             }

@@ -28,20 +28,26 @@
 //*******************************************************
 #define	LED_ON()	cbi(PORTC, PSTAT);
 #define	LED_OFF()	sbi(PORTC, PSTAT);
+#define DIALTONE_ON() (TCCR2B |= (1<<CS20))
+#define DIALTONE_OFF() (TCCR2B &= ~(1<<CS20))
 
 #define sbi(var, mask)   ((var) |= (uint8_t)(1 << mask))
 #define cbi(var, mask)   ((var) &= (uint8_t)~(1 << mask))
 //*******************************************************
 //					General Definitions
 //*******************************************************
-#define MYUBRR 16	//Used to set the AVR Baud Rate
-
-#define MAX_MESSAGE_LENGTH	150	//Buffer length for UART messages
+#define MAX_MESSAGE_LENGTH	64	//Buffer length for UART messages
 #define	OK		1
 #define	ERROR	0
-
+#define BAUD_RATE 57600UL
+#define DOUBLE_BAUD_RATE 1
+#define MYUBRR  (((F_CPU / BAUD_RATE) >> (4 - DOUBLE_BAUD_RATE)) - 1)
 #define	OFF_HOOK	1
 #define	ON_HOOK		0
+#define HOOK_UP     0
+#define HOOK_DOWN   1
+#define HOOK_FLASH  2
+#define HOOK_HANGUP 3
 #define	ROTARY_DIALING	1
 #define	ROTARY_FINISHED	0
 #define STEP_SHIFT 7
@@ -50,16 +56,21 @@
 // see http://www.atmel.com/Images/doc1982.pdf
 #define STEP_350 (350UL * SINE_SAMPLES * (TICKS_PER_CYCLE << STEP_SHIFT) / F_CPU)
 #define STEP_440 (440UL * SINE_SAMPLES * (TICKS_PER_CYCLE << STEP_SHIFT) / F_CPU)
+#define TIMER1_60MS 1875U
+#define TIMER1_140MS 4375U
+#define GET_UART_CHAR(x) ((x) & 0x00FF)
+#define GET_UART_ERROR(x) ((x) & 0xFF00)
 
 //=======================================================
 //					Function Definitions
 //=======================================================
-static int uart_putchar(char c, FILE *stream);
-uint8_t uart_getchar(void);
-static FILE mystdout = FDEV_SETUP_STREAM(uart_putchar, NULL, _FDEV_SETUP_WRITE);
 void ioinit(void);
 void delay_ms(uint16_t x);
 void config_bluetooth(void);
+static int uart_putchar(char c, FILE *f);
+char uart_getc(void);
+char uart_putc(char c);
+char uart_puts(char *c);
 void incoming_call(void);
 void place_call(void);		
 void ring_it(void);			
@@ -68,6 +79,39 @@ char string_compare(const char *search_string, const char *find_string);
 void dial_tone(void);	
 char get_rotary_number(void);
 void dial_number(void);	
+void get_message(void);
+void wait_for(const char *);
+void copy_message(void);
+
+//                  UART Stuff
+//========================================================
+
+#define UART_PARITY_ERROR   (1<<UPE0)
+#define UART_DATA_OVERRUN   (1<<DOR0)
+#define UART_FRAME_ERROR    (1<<FE0)
+
+/** Size of the circular receive buffer, must be power of 2 */
+#ifndef UART_RX_BUFFER_SIZE
+#define UART_RX_BUFFER_SIZE 32
+#endif
+/** Size of the circular transmit buffer, must be power of 2 */
+#ifndef UART_TX_BUFFER_SIZE
+#define UART_TX_BUFFER_SIZE 32
+#endif
+
+/* test if the size of the circular buffers fits into SRAM */
+#if ( (UART_RX_BUFFER_SIZE+UART_TX_BUFFER_SIZE) >= (RAMEND-0x60 ) )
+#error "size of UART_RX_BUFFER_SIZE + UART_TX_BUFFER_SIZE larger than size of SRAM"
+#endif
+
+#if ( (UART_RX_BUFFER_SIZE & (UART_RX_BUFFER_SIZE-1)) )
+#error "UART_RX_BUFFER_SIZE not a power of two!"
+#endif
+
+#if ( (UART_TX_BUFFER_SIZE & (UART_RX_BUFFER_SIZE-1)) )
+#error "UART_TX_BUFFER_SIZE not a power of two!"
+#endif
+
 
 const unsigned char sine_table[] PROGMEM = {128,
     131,
