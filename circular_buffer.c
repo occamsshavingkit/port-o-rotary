@@ -1,3 +1,5 @@
+#include <stdio.h>
+#include <util/atomic.h>
 #include "circular_buffer.h"
 
 void cbuf_init(cbuf *buf, int size, char *elements){
@@ -13,12 +15,20 @@ void cbuf_print(cbuf *cb) {
 }
 
 char cbuf_is_full(cbuf *cb){
-    return cb->tail == (cb->head ^ cb->size); 
+    char ret_val;
+    ATOMIC_BLOCK(ATOMIC_RESTORESTATE) {
+        ret_val = (cb->tail == (cb->head ^ cb->size)); 
+    }
+    return ret_val;
     /* This inverts the most significant bit of head before comparison */
 }
 
 char cbuf_is_empty(cbuf *cb){
-    return cb->tail == cb->head;   
+    char ret_val;
+    ATOMIC_BLOCK(ATOMIC_RESTORESTATE){
+        ret_val = (cb->tail == cb->head); 
+    }
+    return ret_val;
 }
 
 int cbuf_incr(cbuf *cb, int p){
@@ -41,33 +51,46 @@ void cbuf_clear_error(cbuf *cb, char errors){
     cb->error &= ~(errors);
 }
 
+char cbuf_peek(cbuf *cb){
+    if (cb->head != cb->tail) return cb->elements[cb->head&(cb->size - 1)];
+    return 0;
+}
+
 char cbuf_put(cbuf *cb, char c){
-    if (cbuf_is_full(cb)){ /* full, overwrite moves head pointer */
-        cb->head = cbuf_incr(cb, cb->head);
-        cb->error |= CBUF_OVERFLOW;
+    ATOMIC_BLOCK(ATOMIC_RESTORESTATE) {
+        if (cbuf_is_full(cb)){ /* full, overwrite moves head pointer */
+            cb->head = cbuf_incr(cb, cb->head);
+            cb->error |= CBUF_OVERFLOW;
+        } 
+        cb->elements[cb->tail&(cb->size-1)] = c;
+        cb->tail = cbuf_incr(cb, cb->tail);
     }
-    cb->elements[cb->tail&(cb->size-1)] = c;
-    cb->tail = cbuf_incr(cb, cb->tail);
     return cb->error;
+
 }
 
 char cbuf_get(cbuf *cb) {
-    if(cbuf_is_empty(cb)){
-        cb->error |= CBUF_UNDERFLOW;
-        return 0;
+    char c;
+    ATOMIC_BLOCK(ATOMIC_RESTORESTATE){
+        if(cbuf_is_empty(cb)){
+            cb->error |= CBUF_UNDERFLOW;
+            return 0;
+        }
+        c = cb->elements[cb->head&(cb->size-1)];
+        cb->head = cbuf_incr(cb, cb->head);
     }
-    char c = cb->elements[cb->head&(cb->size-1)];
-    cb->head = cbuf_incr(cb, cb->head);
     return c;
 }
 
 char cbuf_push(cbuf *cb, char c){
-    cb->elements[cb->tail&(cb->size-1)] = c;
-    if (cbuf_is_full(cb)){ /* full, overwrite moves head pointer */
-        cb->head = cbuf_decr(cb, cb->head);
-        cb->error |= CBUF_OVERFLOW;
+    ATOMIC_BLOCK(ATOMIC_RESTORESTATE){
+        cb->elements[cb->tail&(cb->size-1)] = c;
+        if (cbuf_is_full(cb)){ /* full, overwrite moves head pointer */
+            cb->head = cbuf_decr(cb, cb->head);
+            cb->error |= CBUF_OVERFLOW;
+        }
+        cb->tail = cbuf_decr(cb, cb->tail);
     }
-    cb->tail = cbuf_decr(cb, cb->tail);
     return cb->error;
 
 }

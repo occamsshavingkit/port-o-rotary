@@ -15,7 +15,9 @@ typedef struct {
 void cbuf_init(cbuf *cb, int size, char *elements);
 char cbuf_is_full(cbuf *cb);
 char cbuf_is_empty(cbuf *cb);
+void cbuf_print(cbuf *cb);
 int cbuf_incr(cbuf *cb, int p);
+char cbuf_peek(cbuf *cb);
 char cbuf_get(cbuf *cb);
 char cbuf_put(cbuf *cb, char c);
 char cbuf_push(cbuf *cb, char c);
