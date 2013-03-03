@@ -411,11 +411,23 @@ void config_bluetooth(void)
 	wait_for("OK");
     printf("SET CONTROL AUTOCALL 111F 15000 HFP\nAT\n");
 	wait_for("OK");
+#ifndef BT_PASSWORD
 	printf("SET BT AUTH * 1234\nAT\n");		//Set the password
+#else
+    printf("SET BT AUTH * ");
+    printf(BT_PASSWORD);
+    printf("\nAT\n");
+#endif
 	wait_for("OK");
 	printf("SET BT CLASS 200404\nAT\n");	//Set device class
 	wait_for("OK");
+#ifndef BT_NAME
 	printf("SET BT NAME SPARKY\nAT\n");		//Set the bluetooth name
+#else
+    printf("SET BT NAME ");
+    printf(BT_NAME);
+    printf("\nAT\n");
+#endif
 	wait_for("OK");
 	printf("RESET\n");
 	//WT32 should now be configured and ready to accept connection from other Bluetooth devices
