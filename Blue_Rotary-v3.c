@@ -16,21 +16,16 @@
 //Define Global Variables
 //================================================================
 FILE mystdout = FDEV_SETUP_STREAM(uart_putchar, NULL, _FDEV_SETUP_WRITE);
-volatile char message[MAX_MESSAGE_LENGTH];	//Buffer for UART messages
-volatile char message_complete = 0;
+char message[MAX_MESSAGE_LENGTH];	//Buffer for UART messages
 volatile char ring_tone_flag;
 volatile char lines_available = 0;
-volatile char message_unread = 0;	//general purpse flags
-char final_message[MAX_MESSAGE_LENGTH];	//Final buffer for UART messages
-volatile int message_index = 0;
 volatile unsigned char portdhistory = 0xFF;
-uint8_t dialed_number, counter;
+uint8_t dialed_number;
 int get_number_timeout = 0;
 uint16_t tone_time_off, tone_time_on;
 uint16_t tone_a_step, tone_b_step;
 uint16_t tone_a_place, tone_b_place;
-uint8_t number_length, temp;
-uint8_t phone_number[20];
+uint8_t temp;
 volatile char hook_status = HOOK_DOWN;
 volatile char connected=0;
 cbuf _rx_buf;
@@ -199,6 +194,8 @@ char uart_puts(char *c){
 
 void get_message() {
     char uart_recv = 0;
+    uint8_t message_complete = 0;
+    uint8_t message_index = 0;
     uart_recv = uart_getc();
     while(!message_complete && message_index < MAX_MESSAGE_LENGTH - 1){
         while(!uart_recv) {
@@ -216,7 +213,6 @@ void get_message() {
             if(message_index > 0) {
                 message[message_index++] = '\0';
                 message_complete = 1;
-                message_unread = 1;
                 return;
             }
         } 
@@ -227,27 +223,21 @@ void get_message() {
     }
 }
 
+
+// This function waits for a specific reply from the BT module.
+// It doesn't look to see if there's anything else we should pay attention to.
+// This is a problem if we never see what we're looking for.
+// Or also if we ignore something that needs our attention (losing the BT connection, for example)
+// Which is why we really need an interpreter for what the BT module says.
 void wait_for(const char *s){
     char match = 0;
     while(!match){
         while(!lines_available) sleep_mode();
         get_message();
-        copy_message();
-        match = string_compare(final_message, s);
-        message_unread=0;
-
+        match = string_compare(message, s);
     }
 }
-
-void copy_message(void){
-    for(int i = 0; i < message_index; i++){
-        final_message[i] = message[i];
-        message[i] = '\0';
-    }
-    message_complete=0;
-    message_index=0;
-}
-
+ 
 static int uart_putchar(char c, FILE *F){
     if (c == '\n'){
         uart_putc('\r');
@@ -302,16 +292,14 @@ int main (void)
 
             while(lines_available){
                 get_message();
-                copy_message();
                 //Check to see if we're receiving an incoming call
-                if(string_compare(final_message, "HFP 0 RING")){
+                if(string_compare(message, "HFP 0 RING")){
                     incoming_call();	//If we're getting a RING, then answer the phone
                 }
                 //Check to see if the BT connection has been lost
-                if(string_compare(final_message, "NO CARRIER 0")){
+                if(string_compare(message, "NO CARRIER 0")){
                     connected=0;	//We're no longer connected to a BT module!
                 }
-                message_unread=0;
             }				
 			
             if(OFF_HOOK()){
@@ -392,6 +380,7 @@ void ioinit(void)
     PCICR = (1<<PCIE1)|(1<<PCIE2);
     // PCINT19 = EROTARY // PCINT20 = ROTARY // PCINT21 = BT_UNPAIR
     PCMSK2 = (1<<PCINT19)|(1<<PCINT20)|(1<<PCINT21);
+    portdhistory = PIND;
     // PCINT8 = HOOK
     PCMSK1 = (1<<PCINT8);
 
@@ -455,12 +444,21 @@ void incoming_call(void)
         sbi(PORTC, RING_PWR);
         printf("ANSWER\n");				//User the iWRAP command to answer the call
         wait_for("STATUS \"call\" 1");
-        while(OFF_HOOK()){
+        while(OFF_HOOK() && connected){
             if(ROTARY_ENGAGED()){ // look for dialing, generate the proper tone
                 if(get_rotary_number()){
                     printf("\nDTMF ");
                     uart_putc(cbuf_get(dial_buf));
                     printf("\n");
+                }
+            }
+            if(lines_available){
+                get_message();
+                if(string_compare(message, "NO CARRIER 0")){
+                    connected = 0;
+                }
+                if(string_compare(message, "STATUS \"call\" 0")){
+                    return; 
                 }
             }
         } 		//Wait for user to hang up
@@ -488,12 +486,10 @@ void place_call(void)
 
         if(lines_available){ 
             get_message();
-            copy_message();
-            if(string_compare(final_message, "NO CARRIER 0")){
+            if(string_compare(message, "NO CARRIER 0")){
                 connected=0;
                 return;		//If we lose the bluetooth connection, exit the function and start looking for a new BT connection
             }
-            message_unread=0;
         }
     }
         
@@ -513,7 +509,7 @@ void place_call(void)
 			get_number_timeout++;
 		}
 		//If we've reached the timeout, and we have a number to dial, then dial it!
-		if(counter > 0) dial_number();
+		if(!cbuf_is_empty(dial_buf)) dial_number();
     }
     get_number_timeout=0;
     wait_for("NO CARRIER 1");
@@ -628,7 +624,7 @@ char get_rotary_number(void){
     //Let's make sure we counted correctly...
 	if(dialed_number == '*' - '0' || dialed_number == '#' - '0' || (dialed_number >= 0 && dialed_number <= 9))
     {
-        if(cbuf_is_full(dial_buf)) short_ring_it();
+        if(cbuf_is_full(dial_buf)) short_ring_it(); //let the user know that the buffer is full
         else cbuf_put(dial_buf, dialed_number + '0');
     }
     else

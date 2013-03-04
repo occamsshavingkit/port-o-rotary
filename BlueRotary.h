@@ -68,6 +68,8 @@
 #define UART_READY_INTERRUPT_TURN_ON()  UCSR0B |= (1<<UDRIE0)
 #define UART_READY_INTERRUPT_TURN_OFF() UCSR0B &= ~(1<<UDRIE0)
 
+
+// The TIMERn_ON() macros are meant to be used with the definitions below them
 #define TIMER0_ON(x) \
 do { \
     TCCR0B &= ~((1<<CS02)|(1<<CS01)|(1<<CS00)); \
@@ -133,7 +135,7 @@ char get_rotary_number(void);
 void dial_number(void);	
 void get_message(void);
 void wait_for(const char *);
-void copy_message(void);
+// void copy_message(void);
 void start_tones(unsigned long, unsigned long);
 void end_tones( void );
 void pulse_tones(unsigned long, unsigned long, unsigned, unsigned);
