@@ -41,19 +41,16 @@ char dial_buf_data[DIAL_BUFFER_SIZE] = {0};
 
 ISR(USART_RX_vect)
 {
-    cli();
     char c = UDR0;
     if(c != '\r'){
         cbuf_put(rx_buf, c);
         uart_error |= UCSR0A & (UART_PARITY_ERROR|UART_DATA_OVERRUN|UART_FRAME_ERROR);
     } 
     else lines_available++;
-    sei();
 }
 
 ISR(USART_UDRE_vect)
 {
-    cli();
     char c = 0;
     if(!cbuf_is_empty(tx_buf)){
         c = cbuf_get(tx_buf);
@@ -65,7 +62,6 @@ ISR(USART_UDRE_vect)
         LED_OFF();
         UART_READY_INTERRUPT_TURN_OFF();
     }
-    sei();
 }
 
 ISR(TIMER1_COMPA_vect)
@@ -394,28 +390,28 @@ void ioinit(void)
 //NOTE: UART must be configured to send data at 57600bps
 void config_bluetooth(void)
 {   
-    printf("SET CONTROL CONFIG 100\nAT\n");	//Enable SCO Links
+    printf("SET CONTROL CONFIG 0040 0100\n");	//Enable SCO Links
 	wait_for("OK");
-    printf("SET PROFILE HFP ON\nAT\n");		//Put iWRAP into HFP mode
+    printf("SET PROFILE HFP ON\n");		//Put iWRAP into HFP mode
 	wait_for("OK");
-    printf("SET CONTROL AUTOCALL 111F 15000 HFP\nAT\n");
+    printf("SET CONTROL AUTOCALL 111F 15000 HFP\n");
 	wait_for("OK");
 #ifndef BT_PASSWORD
-	printf("SET BT AUTH * 1234\nAT\n");		//Set the password
+	printf("SET BT AUTH * 1234\n");		//Set the password
 #else
     printf("SET BT AUTH * ");
     printf(BT_PASSWORD);
-    printf("\nAT\n");
+    printf("\n");
 #endif
 	wait_for("OK");
-	printf("SET BT CLASS 200404\nAT\n");	//Set device class
+	printf("SET BT CLASS 200404\n");	//Set device class
 	wait_for("OK");
 #ifndef BT_NAME
-	printf("SET BT NAME SPARKY\nAT\n");		//Set the bluetooth name
+	printf("SET BT NAME SPARKY\n");		//Set the bluetooth name
 #else
     printf("SET BT NAME ");
     printf(BT_NAME);
-    printf("\nAT\n");
+    printf("\n");
 #endif
 	wait_for("OK");
 	printf("RESET\n");
@@ -488,6 +484,7 @@ void place_call(void)
             get_message();
             if(string_compare(message, "NO CARRIER 0")){
                 connected=0;
+                end_tones();
                 return;		//If we lose the bluetooth connection, exit the function and start looking for a new BT connection
             }
         }

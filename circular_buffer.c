@@ -2,6 +2,10 @@
 #include <util/atomic.h>
 #include "circular_buffer.h"
 
+/*
+ * Implementation shamelessly taken from Wikipedia
+ */
+
 void cbuf_init(cbuf *buf, int size, char *elements){
     buf->size = size;
     buf->head = 0;
