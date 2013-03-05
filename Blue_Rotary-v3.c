@@ -146,16 +146,21 @@ ISR(PCINT1_vect) // HOOK!
 
 ISR(PCINT2_vect)
 {
-    cli();
     sleep_disable();
     char portdchange = PIND ^ portdhistory;
     portdhistory = PIND;
 
     if(portdchange & BT_UNPAIR){
-        printf("SET BT PAIR *");
+		// Someone's pressed the button to unpair stuff!
+		// Let's signal a warning that it's about to happen.
+		RINGER_POWER_UP();
+		for (char i=0; i < 10; i++) {
+			short_ring_it();
+			_delay_ms(50);
+		}
+		RINGER_POWER_DOWN();
+        printf("SET BT PAIR *\n");
     }
-    
-    sei();
 }
 
 ISR(WDT_vect)
