@@ -28,11 +28,18 @@
 //*******************************************************
 #define	LED_ON()	cbi(PORTC, PSTAT)
 #define	LED_OFF()	sbi(PORTC, PSTAT)
+
 #define TONES_ON()  TIMER2_ON(TIMER2_PRESCALE_1)
 #define TONES_OFF() TIMER2_OFF()
 
+#define RINGER_POWER_UP()	cbi(PORTC, RING_PWR)
+#define RINGER_POWER_DOWN()	sbi(PORTC, RING_PWR)
+
 #define sbi(var, mask)   ((var) |= (uint8_t)(1 << mask))
 #define cbi(var, mask)   ((var) &= (uint8_t)~(1 << mask))
+
+//this is how many reads to take of the battery. 
+#define AVERAGE 16
 //*******************************************************
 //					General Definitions
 //*******************************************************
@@ -105,7 +112,7 @@ do { \
     TCCR2B |= (x); \
 } while (0)
 #define TIMER2_OFF()                TCCR2B &= ~((1<<CS22)|(1<<CS21)|(1<<CS20))
-#define TIMER2_IS_ON()              (TCCR2B & ((1<<CS22)|(1<<CS21)|(1<<CS20)))
+#define TIMER2_IS_ON()              !!(TCCR2B & ((1<<CS22)|(1<<CS21)|(1<<CS20)))
 #define TIMER2_PRESCALE_1           (1<<CS20)
 #define TIMER2_PRESCALE_8           (1<<CS21)
 #define TIMER2_PRESCALE_32          ((1<<CS21)|(1<<CS20))
@@ -139,6 +146,8 @@ void wait_for(const char *);
 void start_tones(unsigned long, unsigned long);
 void end_tones( void );
 void pulse_tones(unsigned long, unsigned long, unsigned, unsigned);
+uint16_t readBatt(void);
+
 
 //                  UART Stuff
 //========================================================

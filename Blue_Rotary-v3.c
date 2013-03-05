@@ -38,6 +38,7 @@ char uart_error;
 char rx_buf_data[UART_RX_BUFFER_SIZE] = {0};
 char tx_buf_data[UART_TX_BUFFER_SIZE] = {0};
 char dial_buf_data[DIAL_BUFFER_SIZE] = {0};
+char watchdog_timer_count = 0;
 
 ISR(USART_RX_vect)
 {
@@ -67,9 +68,9 @@ ISR(USART_UDRE_vect)
 ISR(TIMER1_COMPA_vect)
 {
     cli();
-    cbi(PORTC, RING_PWR);
+    RINGER_POWER_UP();
     short_ring_it();
-    sbi(PORTC, RING_PWR);
+    RINGER_POWER_DOWN();
     if(hook_status == HOOK_FLASH){
         hook_status = HOOK_HANGUP;
         LED_OFF();
@@ -160,6 +161,7 @@ ISR(PCINT2_vect)
 ISR(WDT_vect)
 {
     cli();
+	watchdog_timer_count++;
     sei();
 }
 
@@ -219,6 +221,19 @@ void get_message() {
     }
 }
 
+void check_Batt(void){
+	if(watchdog_timer_count > 75 && readBatt() < 360){
+		RINGER_POWER_UP();
+		// 75 time outs * 8 seconds each is every 10 minutes
+		watchdog_timer_count = 0;
+		// let's just signal a warning if the battery is low
+		for(char i = 0; i<5; i++){
+			short_ring_it();
+			_delay_ms(200);
+		}
+		RINGER_POWER_DOWN();	
+	}
+}
 
 // This function waits for a specific reply from the BT module.
 // It doesn't look to see if there's anything else we should pay attention to.
@@ -254,37 +269,42 @@ int main (void)
 	//Turn on the bluetooth module
 	cbi(PORTD, BT_RES);	//Bring module out of reset 
 	sbi(PORTC, BT_EN);	//Enable module
-	cbi(PORTC, RING_PWR);//Let the ringer "Warm Up"
+	RINGER_POWER_UP();//Let the ringer "Warm Up"
     
     wait_for("READY"); // wait for the bluetooth module to say it is ready
     config_bluetooth();	//Put Blue Giga WT32 module into HFP mode
     wait_for("READY"); // wait for the bluetooth module to say it is ready
 
 	while(1){
-        sbi(PORTC, RING_PWR);
+        RINGER_POWER_DOWN();
 		while(!connected)	//Until we're connected to a phone, listen for incoming connections
 		{				
 			LED_ON();
 
 			sei();		//Start looking for messages from Bluetooth
-
-            wait_for("NO CARRIER 1");
-            connected=1;	//Set the connected flag to notify program of status
-            cbi(PORTC, RING_PWR);
-            short_ring_it();	//Give user notification of established connection
-            _delay_ms(100);
-            short_ring_it();
-            sbi(PORTC, RING_PWR);
+			sleep_mode();
+			LED_OFF();
+			
+			while(lines_available){
+				get_message();
+				string_compare(message, "HFP 0 READY");
+				connected=1;	//Set the connected flag to notify program of status
+				RINGER_POWER_UP();
+				short_ring_it();	//Give user notification of established connection
+				_delay_ms(100);
+				short_ring_it();
+				RINGER_POWER_DOWN();
+			}
+			check_Batt();			
 		}
 		
 		while(connected){	//If we're connected, stay in this 'routine' until we're disconnected
-            sbi(PORTC, RING_PWR);
+            RINGER_POWER_DOWN();
 			LED_OFF();
             // sleep until something happens
             sei();
             sleep_mode();
             LED_ON();
-            cbi(PORTC, RING_PWR);
 
             while(lines_available){
                 get_message();
@@ -298,7 +318,9 @@ int main (void)
                 }
             }				
 			
-            if(OFF_HOOK()){
+			check_Batt();
+            
+			if(OFF_HOOK()){
 				place_call(); //We need to dial out
 			}
 		}
@@ -322,7 +344,8 @@ void ioinit(void)
     WDTCSR |= (1<<WDCE)|(1<<WDE);
     WDTCSR = 0x00;
     //WDTCSR |= (1<<WDCE)|(1<<WDE);
-    //WDTCSR = (1<<WDIE);
+    WDTCSR |= (1<<WDIE);
+	WDTCSR |= (1<<WDP3)|(1<<WDP0);
     sei();
     
     // handle power saving
@@ -426,7 +449,7 @@ void config_bluetooth(void)
 //Outputs:	None
 void incoming_call(void)
 {
-    cbi(PORTC, RING_PWR);	//Power on Ringer Circuit
+    RINGER_POWER_UP();	//Power on Ringer Circuit
 
 	ring_it();
     for(int i = 0 ; i < 300; i++)
@@ -437,7 +460,7 @@ void incoming_call(void)
 
     if(OFF_HOOK())	//The phone has been taken off the hooK
     {
-        sbi(PORTC, RING_PWR);
+        RINGER_POWER_DOWN();
         printf("ANSWER\n");				//User the iWRAP command to answer the call
         wait_for("STATUS \"call\" 1");
         while(OFF_HOOK() && connected){
@@ -681,6 +704,31 @@ void pulse_tones(uint32_t freq_a, uint32_t freq_b, uint16_t ms_on, uint16_t ms_o
     TIMER1_TIMEOUT_SET(tone_time_on);
     TIMER1_ON(TIMER1_PRESCALE_256);
     
+}
+
+uint16_t readBatt(void)
+{
+	//AVERAGE defines the number of samples to take from the ADC channel	
+	uint16_t temp, result=0;
+	power_adc_enable();
+	ADMUX=6;
+	for(uint8_t i = 0; i < AVERAGE; i++)		//Read ADC Port
+	{
+		ADCSRA = (1<<ADEN)|(1<<ADSC)|(1<<ADPS2)|(1<<ADPS1);
+		
+		//Conversion starts - wait for ADSC to clear
+		while( (ADCSRA & (1<<ADSC)) != 0 );
+		
+		//Get the reading from the ADC Registers
+		temp = ADCL;
+		temp |= ADCH<<8;
+		
+		//Keep a running total in "result"
+		result += temp;		
+	}
+	power_adc_disable();
+	//Return the average reading of the ADC Voltage!
+	return (((result/AVERAGE)*100)/310)*2;
 }
 
 
